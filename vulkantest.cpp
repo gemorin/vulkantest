@@ -1,13 +1,43 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <iostream>
 using namespace std;
 
-void errorCallback(int error, const char* description)
+void errorCallback(int /*error*/, const char* description)
 {
     puts(description);
+}
+
+VkSurfaceFormatKHR chooseSwapSurfaceFormat(const VkSurfaceFormatKHR* formats,
+                                           uint32_t formatCount)
+{
+    if (formatCount == 1 && formats[0].format == VK_FORMAT_UNDEFINED) {
+        // Guaranteed to be avail in this case
+        return {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+    }
+    for (uint32_t i = 0; i < formatCount; ++i) {
+        if (formats[i].format == VK_FORMAT_B8G8R8A8_UNORM
+         && formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            return formats[i];
+    }
+    return formats[0];
+}
+
+VkPresentModeKHR choosePresentMode(const VkPresentModeKHR* modes,
+                                   uint32_t modeCount)
+{
+    // This is guaranteed to be avail per spec but can be buggy
+    VkPresentModeKHR bestMode = VK_PRESENT_MODE_FIFO_KHR;
+    for (uint32_t i = 0; i < modeCount; ++i) {
+        if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
+            return VK_PRESENT_MODE_MAILBOX_KHR;
+        if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR)
+            bestMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    }
+    return bestMode;
 }
 
 int main()
@@ -107,6 +137,18 @@ int main()
             return graphicsFamily;
         }
     } deviceQueuesFamilies;
+    struct SwapChainDetails {
+        // color depth
+        VkSurfaceFormatKHR format;
+        // how we display images
+        VkPresentModeKHR presentMode;
+        // size of the image
+        VkExtent2D extent;
+        // Images number
+        uint32_t imageCount;
+        VkSurfaceTransformFlagBitsKHR transform;
+        bool set = false;
+    } swapChainDetails;
     {
         uint32_t deviceCount = 0;
         vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
@@ -142,7 +184,8 @@ int main()
                 // We're looking for a device that has 
                 // * graphics family queue
                 // * presentation family queue
-                // * swap chain khr extention
+                // * swap chain khr extension
+                // * valid swap chain format/present mode
                 uint32_t extensionCount;
                 vkEnumerateDeviceExtensionProperties(devices[i], nullptr,
                                                      &extensionCount,
@@ -174,18 +217,66 @@ int main()
                 if (presentSupport) {
                     deviceQueuesFamilies.presentationFamily = j;
                 }
-                if (deviceQueuesFamilies.hasAll()) {
-                    break;
+                if (!deviceQueuesFamilies.hasAll()) {
+                    continue;
                 }
+                VkSurfaceCapabilitiesKHR capabilities;
+                vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice,
+                                                          surface,
+                                                          &capabilities);
+                if (capabilities.currentExtent.width != UINT_MAX) {
+                    swapChainDetails.extent = capabilities.currentExtent;
+                }
+                else {
+                    swapChainDetails.extent.width =
+                        max(capabilities.minImageExtent.width,
+                            min(capabilities.maxImageExtent.width, 800U));
+                    swapChainDetails.extent.height =
+                        max(capabilities.minImageExtent.height,
+                            min(capabilities.maxImageExtent.height, 600U));
+                }
+                uint32_t formatCount;
+                vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface,
+                                                     &formatCount, nullptr);
+                if (0 == formatCount) {
+                    continue;
+                }
+                VkSurfaceFormatKHR formats[formatCount];
+                vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface,
+                                                     &formatCount, formats);
+                swapChainDetails.format = chooseSwapSurfaceFormat(formats,
+                                                                  formatCount);
+
+                uint32_t presentModeCount;
+                vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice,
+                                                          surface,
+                                                          &presentModeCount,
+                                                          nullptr);
+                if (0 == presentModeCount) {
+                    continue;
+                }
+                VkPresentModeKHR presentModes[presentModeCount];
+                vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface,
+                                                          &presentModeCount,
+                                                          presentModes);
+                swapChainDetails.presentMode = choosePresentMode(presentModes,
+                                                                 presentModeCount);
+
+                uint32_t imgCount = capabilities.minImageCount + 1;
+                if (capabilities.maxImageCount > 0)
+                    imgCount = min(capabilities.maxImageCount, imgCount);
+                swapChainDetails.imageCount = imgCount;
+                swapChainDetails.transform = capabilities.currentTransform;
+                swapChainDetails.set = true;
             }
-            if (deviceQueuesFamilies.hasAll()) {
+            if (swapChainDetails.set) {
                 physicalDevice = devices[i];
                 cout << "Using device " << properties.deviceName << endl;
                 break;
             }
         }
     }
-    if (physicalDevice == VK_NULL_HANDLE || !deviceQueuesFamilies.hasAll()) {
+    if (!swapChainDetails.set) {
         puts("Could not find a suitable device");
         return 1;
     }
@@ -244,32 +335,37 @@ int main()
     }
 
     // Swap chain
+    VkSwapchainKHR swapChain;
     {
-        VkSurfaceCapabilitiesKHR capabilities;
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface,
-                                                  &capabilities);
-        uint32_t formatCount;
-        vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface,
-                                              &formatCount, nullptr);
-        if (0 == formatCount) {
-            puts("No format supported");
-            return 1;
-        }
-        VkSurfaceFormatKHR formats[formatCount];
-        vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface,
-                                             &formatCount, formats);
+        VkSwapchainCreateInfoKHR createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.surface = surface;
+        createInfo.minImageCount = swapChainDetails.imageCount;
+        createInfo.imageFormat = swapChainDetails.format.format;
+        createInfo.imageColorSpace = swapChainDetails.format.colorSpace;
+        createInfo.imageExtent = swapChainDetails.extent;
+        createInfo.imageArrayLayers = 1;
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        const bool uniqueQueue = (deviceQueuesFamilies.numUnique() == 1);
+        createInfo.imageSharingMode = uniqueQueue
+                                    ? VK_SHARING_MODE_EXCLUSIVE
+                                    : VK_SHARING_MODE_CONCURRENT;
+        createInfo.queueFamilyIndexCount = uniqueQueue ? 0 : 2;
+        createInfo.pQueueFamilyIndices = uniqueQueue
+                                       ? nullptr
+                                       : (uint32_t *) &deviceQueuesFamilies;
+        createInfo.preTransform = swapChainDetails.transform;
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        createInfo.presentMode = swapChainDetails.presentMode;
+        createInfo.clipped = VK_TRUE;
+        createInfo.oldSwapchain = VK_NULL_HANDLE;
 
-        uint32_t presentModeCount;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface,
-                                                  &presentModeCount, nullptr);
-        if (0 == presentModeCount) {
-            puts("No present modes");
+        VkResult vkRet = vkCreateSwapchainKHR(logicalDevice, &createInfo, nullptr,
+                                              &swapChain);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateSwapchainKHR failed with %d\n", vkRet);
             return 1;
         }
-        VkPresentModeKHR presentModes[presentModeCount];
-        vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface,
-                                                  &presentModeCount,
-                                                  presentModes);
     }
 
     while(1) {
@@ -279,6 +375,7 @@ int main()
         if (!running)
             break;
     }
+    vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(logicalDevice, nullptr);
     vkDestroyInstance(instance, nullptr);
