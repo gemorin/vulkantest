@@ -663,6 +663,74 @@ int main()
         }
     }
 
+    // Command pool
+    VkCommandPool commandPool;
+    {
+        VkCommandPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.queueFamilyIndex = deviceQueuesFamilies.graphicsFamily;
+        poolInfo.flags = 0;
+
+        VkResult vkRet = vkCreateCommandPool(logicalDevice, &poolInfo,
+                                             nullptr, &commandPool);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateCommandPool failed with %d\n", vkRet);
+            return 1;
+        }
+    }
+    // Command buffers
+    VkCommandBuffer commandBuffers[swapChainDetails.imageCount];
+    {
+        VkCommandBufferAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = swapChainDetails.imageCount;
+
+        VkResult vkRet = vkAllocateCommandBuffers(logicalDevice, &allocInfo,
+                                                  commandBuffers);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateCommandPool failed with %d\n", vkRet);
+            return 1;
+        }
+    }
+    // Setup command buffers
+    for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+        beginInfo.pInheritanceInfo = nullptr;
+
+        vkBeginCommandBuffer(commandBuffers[i], &beginInfo);
+
+        VkRenderPassBeginInfo renderPassInfo = {};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = renderPass;
+        renderPassInfo.framebuffer = frameBuffers[i];
+        renderPassInfo.renderArea.offset = {0, 0};
+        renderPassInfo.renderArea.extent = swapChainDetails.extent;
+
+        VkClearValue clearColor = {};
+        clearColor.color.float32[0] = 0.0f;
+        clearColor.color.float32[1] = 0.0f;
+        clearColor.color.float32[2] = 0.0f;
+        clearColor.color.float32[3] = 1.0f;
+        renderPassInfo.clearValueCount = 1;
+        renderPassInfo.pClearValues = &clearColor;
+
+        vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+        vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+
+        vkCmdEndRenderPass(commandBuffers[i]);
+
+        VkResult vkRet = vkEndCommandBuffer(commandBuffers[i]);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkEndCommandBuffer failed with %d\n", vkRet);
+            return 1;
+        }
+    }
+
     while(1) {
         glfwPollEvents();
         bool running = (glfwGetKey(window, GLFW_KEY_ESCAPE ) == GLFW_RELEASE);
@@ -670,10 +738,10 @@ int main()
         if (!running)
             break;
     }
+    vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
     for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
         vkDestroyFramebuffer(logicalDevice, frameBuffers[i], nullptr);
     }
-
     vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
     vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
     vkDestroyRenderPass(logicalDevice, renderPass, nullptr);
