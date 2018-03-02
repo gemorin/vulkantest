@@ -3,7 +3,11 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <fstream>
 #include <iostream>
+#include <string>
+#include <vector>
+
 using namespace std;
 
 void errorCallback(int /*error*/, const char* description)
@@ -24,6 +28,14 @@ VkSurfaceFormatKHR chooseSwapSurfaceFormat(const VkSurfaceFormatKHR* formats,
             return formats[i];
     }
     return formats[0];
+}
+
+string getFileAsString(const char *filename) {
+    ifstream ifs(filename);
+    if (!ifs)
+        return string();
+    return string((std::istreambuf_iterator<char>(ifs)),
+                   std::istreambuf_iterator<char>());
 }
 
 VkPresentModeKHR choosePresentMode(const VkPresentModeKHR* modes,
@@ -181,7 +193,7 @@ int main()
             for (unsigned j = 0; j != queueFamilyCount; ++j) {
                 if (queueProps[j].queueCount <= 0)
                     continue;
-                // We're looking for a device that has 
+                // We're looking for a device that has
                 // * graphics family queue
                 // * presentation family queue
                 // * swap chain khr extension
@@ -256,11 +268,13 @@ int main()
                     continue;
                 }
                 VkPresentModeKHR presentModes[presentModeCount];
-                vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface,
+                vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice,
+                                                          surface,
                                                           &presentModeCount,
                                                           presentModes);
-                swapChainDetails.presentMode = choosePresentMode(presentModes,
-                                                                 presentModeCount);
+                swapChainDetails.presentMode = choosePresentMode(
+                                                             presentModes,
+                                                             presentModeCount);
 
                 uint32_t imgCount = capabilities.minImageCount + 1;
                 if (capabilities.maxImageCount > 0)
@@ -290,8 +304,10 @@ int main()
                                         deviceQueuesFamilies.numUnique()];
         float priority[1] = {1.0f};
         for (unsigned i = 0; i < deviceQueuesFamilies.numUnique(); ++i) {
-            queueCreateInfo[i].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            queueCreateInfo[i].queueFamilyIndex = deviceQueuesFamilies.getUnique(i);
+            queueCreateInfo[i].sType =
+                                    VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo[i].queueFamilyIndex =
+                                             deviceQueuesFamilies.getUnique(i);
             // Only one queue of each type
             queueCreateInfo[i].queueCount = 1;
             queueCreateInfo[i].pQueuePriorities = priority;
@@ -360,12 +376,90 @@ int main()
         createInfo.clipped = VK_TRUE;
         createInfo.oldSwapchain = VK_NULL_HANDLE;
 
-        VkResult vkRet = vkCreateSwapchainKHR(logicalDevice, &createInfo, nullptr,
+        VkResult vkRet = vkCreateSwapchainKHR(logicalDevice, &createInfo,
+                                              nullptr,
                                               &swapChain);
         if (vkRet != VK_SUCCESS) {
             printf("vkCreateSwapchainKHR failed with %d\n", vkRet);
             return 1;
         }
+        // Vulkan is allowed to create more images so let's figure out how many
+        vkGetSwapchainImagesKHR(logicalDevice, swapChain,
+                                &swapChainDetails.imageCount, nullptr);
+    }
+    VkImage swapChainImages[swapChainDetails.imageCount];
+    vkGetSwapchainImagesKHR(logicalDevice, swapChain,
+                            &swapChainDetails.imageCount,
+                            swapChainImages);
+
+    VkImageView imageViews[swapChainDetails.imageCount];
+    for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
+        VkImageViewCreateInfo createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        createInfo.image = swapChainImages[i];
+        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        createInfo.format = swapChainDetails.format.format;
+
+        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        createInfo.subresourceRange.baseMipLevel = 0;
+        createInfo.subresourceRange.levelCount = 1;
+        createInfo.subresourceRange.baseArrayLayer = 0;
+        createInfo.subresourceRange.layerCount = 1;
+
+        VkResult vkRet = vkCreateImageView(logicalDevice, &createInfo, nullptr,
+                                           imageViews + i);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateImageView failed with %d\n", vkRet);
+            return 1;
+        }
+    }
+
+    // Shaders
+    VkShaderModule vertexShader;
+    VkShaderModule fragShader;
+    {
+        string shader = getFileAsString("vertex.spv");
+
+        VkShaderModuleCreateInfo createInfo;
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = shader.size();
+        createInfo.pCode = (uint32_t *) shader.data();
+
+        VkResult vkRet = vkCreateShaderModule(logicalDevice, &createInfo,
+                                              nullptr, &vertexShader);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateShaderModule failed with %d\n", vkRet);
+            return 1;
+        }
+        shader = getFileAsString("fragment.spv");
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = shader.size();
+        createInfo.pCode = (uint32_t *) shader.data();
+
+        vkRet = vkCreateShaderModule(logicalDevice, &createInfo,
+                                     nullptr, &fragShader);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateShaderModule failed with %d\n", vkRet);
+            return 1;
+        }
+    }
+    // Pipeline
+    {
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo;
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInfo.module = vertexShader;
+        vertShaderStageInfo.pName = "main";
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
+        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module = fragShader;
+        fragShaderStageInfo.pName = "main";
     }
 
     while(1) {
@@ -375,6 +469,11 @@ int main()
         if (!running)
             break;
     }
+    for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
+        vkDestroyImageView(logicalDevice, imageViews[i], nullptr);
+    }
+	vkDestroyShaderModule(logicalDevice, fragShader, nullptr);
+	vkDestroyShaderModule(logicalDevice, vertexShader, nullptr);
     vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(logicalDevice, nullptr);
