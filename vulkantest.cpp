@@ -419,6 +419,89 @@ int main()
         }
     }
 
+    // MSAA images
+    VkImage msaaImages[swapChainDetails.imageCount];
+    VkDeviceMemory msaaMemory[swapChainDetails.imageCount];
+    VkImageView msaaViews[swapChainDetails.imageCount];
+    for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
+        VkImageCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = swapChainDetails.format.format;
+        info.extent.width = swapChainDetails.extent.width;
+        info.extent.height = swapChainDetails.extent.height;
+        info.extent.depth = 1;
+        info.mipLevels = 1;
+        info.arrayLayers = 1;
+        info.samples = VK_SAMPLE_COUNT_4_BIT;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        // This image will only be used as a transient render target.  Its
+        // purpose is only to hold the multisampled data before resolving the
+        // render pass.
+        info.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        // Create texture.
+        VkResult vkRet = vkCreateImage(logicalDevice, &info, nullptr,
+                                       msaaImages + i);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateImage failed with %d\n", vkRet);
+            return 1;
+        }
+
+        VkMemoryRequirements memReqs;
+        vkGetImageMemoryRequirements(logicalDevice, msaaImages[i], &memReqs);
+
+        VkPhysicalDeviceMemoryProperties memProps;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
+
+        uint32_t memTypeIndex = 0;
+        for (unsigned j = 0; j < memProps.memoryTypeCount; ++j) {
+            if (memReqs.memoryTypeBits & (1U << j)) {
+                if (memProps.memoryTypes[j].propertyFlags &
+                                     VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT) {
+                    memTypeIndex = j;
+                    break;
+                }
+            }
+        }
+
+        VkMemoryAllocateInfo alloc = { };
+        alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        alloc.allocationSize = memReqs.size;
+        // For multisampled attachments, we will want to use LAZILY allocated
+        // if such a type is available.
+        alloc.memoryTypeIndex = memTypeIndex;
+        vkRet = vkAllocateMemory(logicalDevice, &alloc, nullptr,
+                                 msaaMemory + i);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkAllocateMemory failed with %d\n", vkRet);
+            return 1;
+        }
+        vkBindImageMemory(logicalDevice, msaaImages[i], msaaMemory[i], 0);
+
+        VkImageViewCreateInfo viewInfo = { };
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = msaaImages[i];
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = swapChainDetails.format.format;
+        viewInfo.components.r = VK_COMPONENT_SWIZZLE_R;
+        viewInfo.components.g = VK_COMPONENT_SWIZZLE_G;
+        viewInfo.components.b = VK_COMPONENT_SWIZZLE_B;
+        viewInfo.components.a = VK_COMPONENT_SWIZZLE_A;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        vkRet = vkCreateImageView(logicalDevice, &viewInfo, nullptr,
+                                  msaaViews + i);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateImageView failed with %d\n", vkRet);
+            return 1;
+        }
+    }
+
+
     // Shaders
     VkShaderModule vertexShader;
     VkShaderModule fragShader;
@@ -451,33 +534,49 @@ int main()
     // Render passes
     VkRenderPass renderPass;
     {
-        VkAttachmentDescription colorAttachment = {};
-        colorAttachment.format = swapChainDetails.format.format;
-        colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        // MSAA attachment
+        // from https://arm-software.github.io/vulkan-sdk/multisampling.html
+        VkAttachmentDescription attachments[2];
+        attachments[0].format = swapChainDetails.format.format;
+        attachments[0].samples = VK_SAMPLE_COUNT_4_BIT;
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        // Don't write to memory, we just want to compute
+        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        // this does not go to the presentation
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-        // No stencil buffer
-        colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].format = swapChainDetails.format.format;
+        attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[1].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        VkAttachmentReference colorRef = {};
+        colorRef.attachment = 0;
+        colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-        VkAttachmentReference colorAttachmentRef = {};
-        colorAttachmentRef.attachment = 0;
-        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        VkAttachmentReference resolveRef = {};
+        resolveRef.attachment = 1;
+        resolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
         // The color attachment is referenced by
         // 'layout (location = 0) out vec4 outColor' in the frag shader
         VkSubpassDescription subpass = {};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &colorAttachmentRef;
+        subpass.pColorAttachments = &colorRef;
+        subpass.pResolveAttachments = &resolveRef;
 
         VkRenderPassCreateInfo renderPassInfo = {};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        renderPassInfo.attachmentCount = 1;
-        renderPassInfo.pAttachments = &colorAttachment;
+        renderPassInfo.attachmentCount = 2;
+        renderPassInfo.pAttachments = attachments;
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
 
@@ -580,7 +679,7 @@ int main()
         multisampling.sType =
                      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
         multisampling.sampleShadingEnable = VK_FALSE;
-        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_4_BIT;
         multisampling.minSampleShading = 1.0f;
         multisampling.pSampleMask = nullptr;
         multisampling.alphaToCoverageEnable = VK_FALSE;
@@ -605,7 +704,8 @@ int main()
         colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
         VkPipelineColorBlendStateCreateInfo colorBlending = {};
-        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        colorBlending.sType =
+                     VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         colorBlending.logicOpEnable = VK_FALSE;
         colorBlending.logicOp = VK_LOGIC_OP_COPY;
         colorBlending.attachmentCount = 1;
@@ -619,7 +719,8 @@ int main()
         // VkPipelineDynamicStateCreateInfo dynamicState = {};
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
-        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.sType =
+                                VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 0;
         pipelineLayoutInfo.pSetLayouts = nullptr;
         pipelineLayoutInfo.pushConstantRangeCount = 0;
@@ -662,11 +763,11 @@ int main()
     // Create framebuffers
     VkFramebuffer frameBuffers[swapChainDetails.imageCount];
     for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
-        VkImageView attachments[] = { imageViews[i] };
+        VkImageView attachments[] = { msaaViews[i], imageViews[i] };
         VkFramebufferCreateInfo framebufferInfo = {};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = renderPass;
-        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.attachmentCount = 2;
         framebufferInfo.pAttachments = attachments;
         framebufferInfo.width = swapChainDetails.extent.width;
         framebufferInfo.height = swapChainDetails.extent.height;
