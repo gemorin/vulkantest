@@ -232,6 +232,7 @@ int main()
                 if (!deviceQueuesFamilies.hasAll()) {
                     continue;
                 }
+                physicalDevice = devices[i];
                 VkSurfaceCapabilitiesKHR capabilities;
                 vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice,
                                                           surface,
@@ -284,7 +285,6 @@ int main()
                 swapChainDetails.set = true;
             }
             if (swapChainDetails.set) {
-                physicalDevice = devices[i];
                 cout << "Using device " << properties.deviceName << endl;
                 break;
             }
