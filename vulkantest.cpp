@@ -481,6 +481,18 @@ int main()
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
 
+        VkSubpassDependency dependency = {};
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependency.dstSubpass = 0;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.srcAccessMask = 0;
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                   VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+         renderPassInfo.dependencyCount = 1;
+         renderPassInfo.pDependencies = &dependency;
+
         VkResult vkRet =  vkCreateRenderPass(logicalDevice, &renderPassInfo,
                                              nullptr, &renderPass);
         if (vkRet != VK_SUCCESS) {
@@ -718,8 +730,10 @@ int main()
         renderPassInfo.clearValueCount = 1;
         renderPassInfo.pClearValues = &clearColor;
 
-        vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+        vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo,
+                             VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          graphicsPipeline);
         vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
 
         vkCmdEndRenderPass(commandBuffers[i]);
@@ -730,9 +744,74 @@ int main()
             return 1;
         }
     }
+    VkSemaphore imageAvailableSemaphore;
+    VkSemaphore renderFinishedSemaphore;
+    {
+        VkSemaphoreCreateInfo semaphoreInfo = {};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        VkResult vkRet = vkCreateSemaphore(logicalDevice, &semaphoreInfo,
+                                           nullptr, &imageAvailableSemaphore);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateSemaphore failed with %d\n", vkRet);
+            return 1;
+        }
+        vkRet = vkCreateSemaphore(logicalDevice, &semaphoreInfo,
+                                  nullptr, &renderFinishedSemaphore);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateSemaphore failed with %d\n", vkRet);
+            return 1;
+        }
+    }
 
     while(1) {
         glfwPollEvents();
+
+        // Draw
+        uint32_t imageIndex;
+        vkAcquireNextImageKHR(logicalDevice, swapChain, ULONG_MAX,
+                              imageAvailableSemaphore, VK_NULL_HANDLE,
+                              &imageIndex);
+
+        VkSubmitInfo submitInfo = {};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+        VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
+        VkPipelineStageFlags waitStages[] = {
+                                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+
+        VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = signalSemaphores;
+
+        VkResult vkRet = vkQueueSubmit(graphicsQueue, 1, &submitInfo,
+                                       VK_NULL_HANDLE);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkQueueSubmit failed with %d\n", vkRet);
+            return 1;
+        }
+
+        VkPresentInfoKHR presentInfo = {};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = signalSemaphores;
+        VkSwapchainKHR swapChains[] = {swapChain};
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = swapChains;
+        presentInfo.pImageIndices = &imageIndex;
+        presentInfo.pResults = nullptr;
+
+        vkQueuePresentKHR(presentationQueue, &presentInfo);
+
+        vkDeviceWaitIdle(logicalDevice);
+
+
         bool running = (glfwGetKey(window, GLFW_KEY_ESCAPE ) == GLFW_RELEASE);
         running &= !glfwWindowShouldClose(window);
         if (!running)
