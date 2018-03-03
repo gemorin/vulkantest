@@ -4,9 +4,11 @@ CXX=clang++
 # can't use glfw 3.2.1, moltenvk supported in HEAD: brew install glfw --HEAD
 GLFWDIR=/usr/local/Cellar/glfw/HEAD-7787973
 
-MOLTENDIR=/Users/guillaume/dev/Molten-0.19.0
-MOLTENVK=$(MOLTENDIR)/MoltenVK
-SHADERCOMPILER=$(MOLTENDIR)/MoltenShaderConverter/Tools/MoltenShaderConverter
+#MOLTENDIR=/Users/guillaume/dev/Molten-0.19.0
+MOLTENDIR=/Users/guillaume/dev/MoltenVK
+MOLTENPKG=$(MOLTENDIR)/Package/Release
+MOLTENVK=$(MOLTENPKG)/MoltenVK
+SHADERCOMPILER=$(MOLTENPKG)/MoltenVKShaderConverter/Tools/MoltenVKShaderConverter
 
 INCS=-I$(GLFWDIR)/include/GLFW -I$(MOLTENVK)/include
 CXXFLAGS=-Wall -W $(INCS) -std=c++14 -g -O2
