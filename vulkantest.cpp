@@ -936,6 +936,15 @@ int main()
     for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
         vkDestroyImageView(logicalDevice, imageViews[i], nullptr);
     }
+    for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
+        vkDestroyImageView(logicalDevice, msaaViews[i], nullptr);
+    }
+    for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
+        vkDestroyImage(logicalDevice, msaaImages[i], nullptr);
+    }
+    for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
+        vkFreeMemory(logicalDevice, msaaMemory[i], nullptr);
+    }
     vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(logicalDevice, nullptr);
