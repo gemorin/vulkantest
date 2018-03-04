@@ -5,10 +5,12 @@ CXX=clang++
 GLFWDIR=/usr/local/Cellar/glfw/HEAD-7787973
 
 #MOLTENDIR=/Users/guillaume/dev/Molten-0.19.0
+#MOLTENPKG=$(MOLTENDIR)
+#SHADERCOMPILER=/Users/guillaume/dev/Molten-0.19.0/MoltenShaderConverter/Tools/MoltenShaderConverter
 MOLTENDIR=/Users/guillaume/dev/MoltenVK
 MOLTENPKG=$(MOLTENDIR)/Package/Release
-MOLTENVK=$(MOLTENPKG)/MoltenVK
 SHADERCOMPILER=$(MOLTENPKG)/MoltenVKShaderConverter/Tools/MoltenVKShaderConverter
+MOLTENVK=$(MOLTENPKG)/MoltenVK
 
 INCS=-I$(GLFWDIR)/include/GLFW -I$(MOLTENVK)/include
 CXXFLAGS=-Wall -W $(INCS) -std=c++14 -g -O2

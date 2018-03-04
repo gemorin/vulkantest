@@ -942,6 +942,7 @@ int main()
             break;
         }
     }
+    // Wait everything to finish, then start to clean up
     for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
         vkWaitForFences(logicalDevice, 1, swapChainFences + i, VK_TRUE,
                         UINT64_MAX);
