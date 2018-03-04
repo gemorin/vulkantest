@@ -3,9 +3,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <fstream>
-#include <iostream>
-#include <string>
 #include <vector>
 
 using namespace std;
@@ -80,7 +77,7 @@ class VulkanApp
     void run();
 
   private:
-    string getFileAsString(const char *filename);
+    bool readFile(vector<char> *data, const char *filename);
     VkPresentModeKHR choosePresentMode(const VkPresentModeKHR* modes,
                                        uint32_t modeCount);
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(
@@ -154,13 +151,22 @@ void VulkanApp::run()
     cleanup();
 }
 
-string VulkanApp::getFileAsString(const char *filename)
+bool VulkanApp::readFile(vector<char> *buf, const char *filename)
 {
-    ifstream ifs(filename);
-    if (!ifs)
-        return string();
-    return string((std::istreambuf_iterator<char>(ifs)),
-                   std::istreambuf_iterator<char>());
+    FILE *fd = fopen(filename, "r");
+    if (!fd)
+        return false;
+    size_t numRead = 0;
+    while (1) {
+        buf->resize(numRead + 4096);
+        size_t ret = fread(buf->data() + numRead, 1, 4096, fd);
+        numRead += ret;
+        if (ret != 4096)
+            break;
+    }
+    buf->resize(numRead);
+    fclose(fd);
+    return true;
 }
 
 VkPresentModeKHR VulkanApp::choosePresentMode(const VkPresentModeKHR* modes,
@@ -208,13 +214,13 @@ bool VulkanApp::initGlFw() {
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount,
                                            properties);
 
-    std::cout << extensionCount << " extensions supported: ";
+    printf("%u extensions supported: ", extensionCount);
     for (unsigned i = 0; i < extensionCount; ++i) {
         if (i)
-            cout << ", ";
-        cout << properties[i].extensionName;
+            printf(", ");
+        printf("properties[i].extensionName");
     }
-    cout << endl;
+    puts("");
     if (glfwVulkanSupported() != GLFW_TRUE) {
         puts("glfw does not support vulkan! Upgrade to the latest version");
         return false;
@@ -385,7 +391,7 @@ bool VulkanApp::choosePhysicalDevice()
         devInfo.transform = capabilities.currentTransform;
         devInfo.families[0] = graphicsFamily;
         devInfo.families[1] = presentationFamily;
-        cout << "Using device " << properties.deviceName << endl;
+        printf("Using device %s\n", properties.deviceName);
         return true;
     }
     return false;
@@ -614,7 +620,11 @@ bool VulkanApp::createSwapChain()
 }
 
 bool VulkanApp::loadShaders() {
-    string shader = getFileAsString("vertex.spv");
+    vector<char> shader;
+    if (!readFile(&shader, "vertex.spv")) {
+        printf("Could not read vertex.spv\n");
+        return false;
+    }
 
     VkShaderModuleCreateInfo createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -627,7 +637,10 @@ bool VulkanApp::loadShaders() {
         printf("vkCreateShaderModule failed with %d\n", vkRet);
         return false;
     }
-    shader = getFileAsString("fragment.spv");
+    if (!readFile(&shader, "fragment.spv")) {
+        printf("Could not read fragment.spv\n");
+        return false;
+    }
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     createInfo.codeSize = shader.size();
     createInfo.pCode = (uint32_t *) shader.data();
