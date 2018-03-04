@@ -851,39 +851,59 @@ int main()
             return 1;
         }
     }
-    VkSemaphore imageAvailableSemaphore;
-    VkSemaphore renderFinishedSemaphore;
-    {
+    VkSemaphore imageAvailableSemaphore[swapChainDetails.imageCount];
+    VkSemaphore renderFinishedSemaphore[swapChainDetails.imageCount];
+    for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
         VkSemaphoreCreateInfo semaphoreInfo = {};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
         VkResult vkRet = vkCreateSemaphore(logicalDevice, &semaphoreInfo,
-                                           nullptr, &imageAvailableSemaphore);
+                                           nullptr, imageAvailableSemaphore+i);
         if (vkRet != VK_SUCCESS) {
             printf("vkCreateSemaphore failed with %d\n", vkRet);
             return 1;
         }
         vkRet = vkCreateSemaphore(logicalDevice, &semaphoreInfo,
-                                  nullptr, &renderFinishedSemaphore);
+                                  nullptr, renderFinishedSemaphore+i);
         if (vkRet != VK_SUCCESS) {
             printf("vkCreateSemaphore failed with %d\n", vkRet);
             return 1;
         }
     }
+    VkFence swapChainFences[swapChainDetails.imageCount];
+    for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
+        VkFenceCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        createInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
+        VkResult vkRet = vkCreateFence(logicalDevice, &createInfo,
+                                       nullptr, swapChainFences + i);
+        if (vkRet != VK_SUCCESS) {
+            printf("vkCreateFence failed with %d\n", vkRet);
+            return 1;
+        }
+    }
+
+    uint32_t nextImage = 0;
     while(1) {
         glfwPollEvents();
 
         // Draw
+        const uint32_t idx = (nextImage++) % swapChainDetails.imageCount;
+
+        vkWaitForFences(logicalDevice, 1, swapChainFences + idx, VK_TRUE,
+                        UINT64_MAX);
+        vkResetFences(logicalDevice, 1, swapChainFences + idx);
+
         uint32_t imageIndex;
         vkAcquireNextImageKHR(logicalDevice, swapChain, ULONG_MAX,
-                              imageAvailableSemaphore, VK_NULL_HANDLE,
+                              imageAvailableSemaphore[idx], VK_NULL_HANDLE,
                               &imageIndex);
 
         VkSubmitInfo submitInfo = {};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-        VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
+        VkSemaphore waitSemaphores[] = {imageAvailableSemaphore[idx]};
         VkPipelineStageFlags waitStages[] = {
                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
         submitInfo.waitSemaphoreCount = 1;
@@ -892,12 +912,12 @@ int main()
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
 
-        VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
+        VkSemaphore signalSemaphores[] = {renderFinishedSemaphore[idx]};
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
         VkResult vkRet = vkQueueSubmit(graphicsQueue, 1, &submitInfo,
-                                       VK_NULL_HANDLE);
+                                       swapChainFences[idx]);
         if (vkRet != VK_SUCCESS) {
             printf("vkQueueSubmit failed with %d\n", vkRet);
             return 1;
@@ -916,13 +936,18 @@ int main()
 
         vkQueuePresentKHR(presentationQueue, &presentInfo);
 
-        vkDeviceWaitIdle(logicalDevice);
-
-
         bool running = (glfwGetKey(window, GLFW_KEY_ESCAPE ) == GLFW_RELEASE);
         running &= !glfwWindowShouldClose(window);
-        if (!running)
+        if (!running) {
             break;
+        }
+    }
+    for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
+        vkWaitForFences(logicalDevice, 1, swapChainFences + i, VK_TRUE,
+                        UINT64_MAX);
+        vkDestroyFence(logicalDevice, swapChainFences[i], nullptr);
+        vkDestroySemaphore(logicalDevice, imageAvailableSemaphore[i], nullptr);
+        vkDestroySemaphore(logicalDevice, renderFinishedSemaphore[i], nullptr);
     }
     vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
     for (unsigned i = 0; i < swapChainDetails.imageCount; ++i) {
