@@ -16,6 +16,7 @@ class VulkanApp
     struct PhysicalDeviceInfo {
         VkPhysicalDevice device = VK_NULL_HANDLE;
         VkPhysicalDeviceFeatures deviceFeatures;
+        VkSurfaceCapabilitiesKHR capabilities;
 
         // idx 0 is graphics, 1 is presentation
         uint32_t families[2];
@@ -26,7 +27,6 @@ class VulkanApp
         VkPresentModeKHR presentMode;
         VkExtent2D extent;
         uint32_t imageCount;
-        VkSurfaceTransformFlagBitsKHR transform;
 
         bool hasUniqueFamily() const {
             return families[0] == families[1];
@@ -103,8 +103,20 @@ class VulkanApp
     bool createCommandBuffers();
     bool setupCommandBuffers();
     void cleanup();
+    void cleanupSwapChain();
+    void waitForIdle();
+    bool recreateSwapChain();
+    void onResize(int width, int height);
+    void updateExtent();
 
     bool renderFrame(uint32_t renderCount);
+
+    // Glfw glue
+    static void glfw_onResize(GLFWwindow * window, int width, int height)
+    {
+        VulkanApp *app = (VulkanApp *) glfwGetWindowUserPointer(window);
+        app->onResize(width, height);
+    }
 };
 
 bool VulkanApp::init()
@@ -144,11 +156,16 @@ void VulkanApp::run()
             break;
         }
     }
-    // Wait everything to finish, then start to clean up
+
+    waitForIdle();
+    cleanup();
+}
+
+void VulkanApp::waitForIdle()
+{
     for (auto & swpe : swapChain)
         vkWaitForFences(device, 1, &swpe.fence, VK_TRUE, UINT64_MAX);
-
-    cleanup();
+    vkDeviceWaitIdle(device);
 }
 
 bool VulkanApp::readFile(vector<char> *buf, const char *filename)
@@ -206,8 +223,10 @@ bool VulkanApp::initGlFw() {
 
     // This prevents glfw from creating a gl context
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     window = glfwCreateWindow(800, 600, "Vulkan", nullptr, nullptr);
+    glfwSetWindowUserPointer(window, this);
+    glfwSetWindowSizeCallback(window, &VulkanApp::glfw_onResize);
 
     VkExtensionProperties properties[16];
     uint32_t extensionCount = 16;
@@ -218,7 +237,7 @@ bool VulkanApp::initGlFw() {
     for (unsigned i = 0; i < extensionCount; ++i) {
         if (i)
             printf(", ");
-        printf("properties[i].extensionName");
+        printf("%s", properties[i].extensionName);
     }
     puts("");
     if (glfwVulkanSupported() != GLFW_TRUE) {
@@ -265,6 +284,30 @@ bool VulkanApp::createSurface() {
         return false;
     }
     return true;
+}
+
+void VulkanApp::updateExtent()
+{
+    int width, height;
+    glfwGetWindowSize(window, &width, &height);
+    glfwGetFramebufferSize(window, &width, &height);
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(devInfo.device, surface,
+                                              &devInfo.capabilities);
+    if (devInfo.capabilities.currentExtent.width != UINT_MAX) {
+        devInfo.extent = devInfo.capabilities.currentExtent;
+    }
+    else {
+        devInfo.extent.width =
+            max(devInfo.capabilities.minImageExtent.width,
+                min(devInfo.capabilities.maxImageExtent.width,
+                    (unsigned) width));
+        devInfo.extent.height =
+            max(devInfo.capabilities.minImageExtent.height,
+                min(devInfo.capabilities.maxImageExtent.height,
+                    (unsigned) height));
+    }
+    devInfo.extent.width = width;
+    devInfo.extent.height = height;
 }
 
 bool VulkanApp::choosePhysicalDevice()
@@ -357,20 +400,9 @@ bool VulkanApp::choosePhysicalDevice()
 
         // Ok, we're going to use this device.  Populate devInfo
         devInfo.device = devices[i];
-        VkSurfaceCapabilitiesKHR capabilities;
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(devices[i], surface,
-                                                  &capabilities);
-        if (capabilities.currentExtent.width != UINT_MAX) {
-            devInfo.extent = capabilities.currentExtent;
-        }
-        else {
-            devInfo.extent.width =
-                max(capabilities.minImageExtent.width,
-                    min(capabilities.maxImageExtent.width, 800U));
-            devInfo.extent.height =
-                max(capabilities.minImageExtent.height,
-                    min(capabilities.maxImageExtent.height, 600U));
-        }
+                                                  &devInfo.capabilities);
+        updateExtent();
 
         VkSurfaceFormatKHR formats[formatCount];
         vkGetPhysicalDeviceSurfaceFormatsKHR(devices[i], surface,
@@ -384,11 +416,10 @@ bool VulkanApp::choosePhysicalDevice()
         devInfo.presentMode = choosePresentMode(presentModes,
                                                 presentModeCount);
 
-        uint32_t imgCount = capabilities.minImageCount + 1;
-        if (capabilities.maxImageCount > 0)
-            imgCount = min(capabilities.maxImageCount, imgCount);
+        uint32_t imgCount = devInfo.capabilities.minImageCount + 1;
+        if (devInfo.capabilities.maxImageCount > 0)
+            imgCount = min(devInfo.capabilities.maxImageCount, imgCount);
         devInfo.imageCount = imgCount;
-        devInfo.transform = capabilities.currentTransform;
         devInfo.families[0] = graphicsFamily;
         devInfo.families[1] = presentationFamily;
         printf("Using device %s\n", properties.deviceName);
@@ -464,7 +495,7 @@ bool VulkanApp::createSwapChain()
     createInfo.pQueueFamilyIndices = devInfo.hasUniqueFamily()
                                    ? nullptr
                                    : devInfo.families;
-    createInfo.preTransform = devInfo.transform;
+    createInfo.preTransform = devInfo.capabilities.currentTransform;
     createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     createInfo.presentMode = devInfo.presentMode;
     createInfo.clipped = VK_TRUE;
@@ -988,10 +1019,15 @@ bool VulkanApp::renderFrame(uint32_t renderCount)
     vkWaitForFences(device, 1, &swapChain[idx].fence, VK_TRUE, UINT64_MAX);
     vkResetFences(device, 1, &swapChain[idx].fence);
 
+    VkResult vkRet;
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(device, vkSwapChain, ULONG_MAX,
-                          swapChain[idx].imageAvailableSem, VK_NULL_HANDLE,
-                          &imageIndex);
+    vkRet = vkAcquireNextImageKHR(device, vkSwapChain, ULONG_MAX,
+                                  swapChain[idx].imageAvailableSem,
+                                  VK_NULL_HANDLE, &imageIndex);
+    if (vkRet != VK_SUCCESS) {
+        // XXX Handle VK_SUBOPTIMAL_KHR VK_ERROR_OUT_OF_DATE_KHR
+        printf("vkAcquireNextImageKHR returned %d\n", vkRet);
+    }
 
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1009,8 +1045,7 @@ bool VulkanApp::renderFrame(uint32_t renderCount)
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    VkResult vkRet = vkQueueSubmit(graphicsQueue, 1, &submitInfo,
-                                   swapChain[idx].fence);
+    vkRet = vkQueueSubmit(graphicsQueue, 1, &submitInfo, swapChain[idx].fence);
     if (vkRet != VK_SUCCESS) {
         printf("vkQueueSubmit failed with %d\n", vkRet);
         return false;
@@ -1027,14 +1062,38 @@ bool VulkanApp::renderFrame(uint32_t renderCount)
     presentInfo.pImageIndices = &imageIndex;
     presentInfo.pResults = nullptr;
 
-    vkQueuePresentKHR(presentationQueue, &presentInfo);
+    vkRet = vkQueuePresentKHR(presentationQueue, &presentInfo);
+    if (vkRet != VK_SUCCESS) {
+        // XXX Handle VK_SUBOPTIMAL_KHR VK_ERROR_OUT_OF_DATE_KHR
+        printf("vkQueuePresentKHR returned %d\n", vkRet);
+    }
 
     return true;
 }
 
-void VulkanApp::cleanup()
+bool VulkanApp::recreateSwapChain()
 {
-    vkDestroyCommandPool(device, commandPool, nullptr);
+    waitForIdle();
+
+    updateExtent();
+
+    cleanupSwapChain();
+    if (!createSwapChain()
+     || !loadShaders()
+     || !createRenderPass()
+     || !createPipeline()
+     || !createFrameBuffers()
+     || !createCommandBuffers()
+     || !setupCommandBuffers())
+        return false;
+    return true;
+}
+
+void VulkanApp::cleanupSwapChain()
+{
+    vkFreeCommandBuffers(device, commandPool,
+                         static_cast<uint32_t>(commandBuffers.size()),
+                         commandBuffers.data());
     for (unsigned i = 0; i < swapChain.size(); ++i) {
         vkDestroyFramebuffer(device, frameBuffers[i], nullptr);
     }
@@ -1055,12 +1114,25 @@ void VulkanApp::cleanup()
         vkDestroyImage(device, swpe.msaaImage, nullptr);
     }
     vkDestroySwapchainKHR(device, vkSwapChain, nullptr);
+}
+
+void VulkanApp::cleanup()
+{
+    cleanupSwapChain();
+    vkDestroyCommandPool(device, commandPool, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
     glfwDestroyWindow(window);
 
     glfwTerminate();
+}
+
+void VulkanApp::onResize(int width, int height)
+{
+    if (width == 0 || height == 0)
+        return;
+    recreateSwapChain();
 }
 
 int main(void)
