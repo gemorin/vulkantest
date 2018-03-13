@@ -1,30 +1,23 @@
 CXX=clang++
-
-#GLFWDIR=/usr/local/Cellar/glfw/3.2.1
-# can't use glfw 3.2.1, moltenvk supported in HEAD: brew install glfw --HEAD
-#GLFWDIR=/usr/local/Cellar/glfw/HEAD-7787973
 GLFWDIR=/Users/guillaume/dev/glfw
 
-#MOLTENDIR=/Users/guillaume/dev/Molten-0.19.0
-#MOLTENPKG=$(MOLTENDIR)
-#SHADERCOMPILER=/Users/guillaume/dev/Molten-0.19.0/MoltenShaderConverter/Tools/MoltenShaderConverter
-MOLTENDIR=/Users/guillaume/dev/MoltenVK
-MOLTENPKG=$(MOLTENDIR)/Package/Release
-SHADERCOMPILER=$(MOLTENPKG)/MoltenVKShaderConverter/Tools/MoltenVKShaderConverter
-MOLTENVK=$(MOLTENPKG)/MoltenVK
+VULKANDIR=/Users/guillaume/dev/vulkansdk-macos-1.0.69.0
+SHADERCOMPILER=$(VULKANDIR)/macOS/bin/glslc
+VULKANLIBPATH=$(VULKANDIR)/macOS/lib
+VULKANINC=$(VULKANDIR)/macOS/include
 
-INCS=-I$(GLFWDIR)/include/GLFW -I$(MOLTENVK)/include
+INCS=-I$(GLFWDIR)/include/GLFW -I$(VULKANINC)
 CXXFLAGS=-Wall -W $(INCS) -std=c++14 -g -O2
-LDFLAGS=-L$(GLFWDIR)/src -L$(MOLTENVK)/macOS -framework Cocoa -framework Metal -framework IOSurface -rpath $(MOLTENVK)/macOS -lMoltenVK -lglfw
+LDFLAGS=-O2 -L$(GLFWDIR)/src -L $(VULKANLIBPATH) -framework Cocoa -framework Metal -framework IOSurface -rpath $(VULKANLIBPATH) -lglfw -lvulkan
 
 all: vulkantest fragment.spv vertex.spv
 main: vulkantest.cpp
 
 fragment.spv: fragment.glsl
-	$(SHADERCOMPILER) -t f -gi $< -so $@
+	$(SHADERCOMPILER) -fshader-stage=fragment -o $@ $<
 
 vertex.spv: vertex.glsl
-	$(SHADERCOMPILER) -t v -gi $< -so $@
+	$(SHADERCOMPILER) -fshader-stage=vertex -o $@ $<
 
 
 clean:
