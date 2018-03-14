@@ -588,7 +588,8 @@ bool VulkanApp::createSwapChain()
         // This image will only be used as a transient render target.  Its
         // purpose is only to hold the multisampled data before resolving the
         // render pass.
-        info.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+        info.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
+                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         // Create texture.
         vkRet = vkCreateImage(device, &info, nullptr, &swpe.msaaImage);
@@ -689,6 +690,7 @@ bool VulkanApp::createRenderPass()
     // MSAA attachment
     // from https://arm-software.github.io/vulkan-sdk/multisampling.html
     VkAttachmentDescription attachments[2];
+    memset(attachments, 0, sizeof(attachments));
     attachments[0].format = devInfo.format.format;
     attachments[0].samples = VK_SAMPLE_COUNT_4_BIT;
     attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
