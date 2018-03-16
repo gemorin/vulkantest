@@ -7,6 +7,8 @@
 
 using namespace std;
 
+#define MSAA 1
+
 class VulkanApp
 {
     GLFWwindow *window = nullptr;
@@ -42,9 +44,11 @@ class VulkanApp
         VkImageView view;
 
         // Anti aliasing stuff
+#ifdef MSAA
         VkImage msaaImage;
         VkDeviceMemory msaaMemory;
         VkImageView msaaView;
+#endif
 
         // Synchronization
         VkSemaphore imageAvailableSem;
@@ -573,6 +577,7 @@ bool VulkanApp::createSwapChain()
         }
 
         // MSAA init
+#ifdef MSAA
         VkImageCreateInfo info = {};
         info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         info.imageType = VK_IMAGE_TYPE_2D;
@@ -647,6 +652,7 @@ bool VulkanApp::createSwapChain()
             printf("vkCreateImageView failed with %d\n", vkRet);
             return false;
         }
+#endif
     }
     return true;
 }
@@ -692,16 +698,26 @@ bool VulkanApp::createRenderPass()
     VkAttachmentDescription attachments[2];
     memset(attachments, 0, sizeof(attachments));
     attachments[0].format = devInfo.format.format;
-    attachments[0].samples = VK_SAMPLE_COUNT_4_BIT;
     attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+#ifdef MSAA
+    attachments[0].samples = VK_SAMPLE_COUNT_4_BIT;
     // Don't write to memory, we just want to compute
     attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+ #else
+    attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+#endif
     attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+#ifdef MSAA
     // this does not go to the presentation
     attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#else
+    attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#endif
 
+#ifdef MSAA
     attachments[1].format = devInfo.format.format;
     attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
     attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -710,6 +726,8 @@ bool VulkanApp::createRenderPass()
     attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     attachments[1].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#endif
+
 
     VkAttachmentReference colorRef = {};
     colorRef.attachment = 0;
@@ -725,11 +743,19 @@ bool VulkanApp::createRenderPass()
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &colorRef;
+#ifdef MSAA
     subpass.pResolveAttachments = &resolveRef;
+#else
+    subpass.pResolveAttachments = nullptr;
+#endif
 
     VkRenderPassCreateInfo renderPassInfo = {};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+#ifdef MSAA
     renderPassInfo.attachmentCount = 2;
+#else
+    renderPassInfo.attachmentCount = 1;
+#endif
     renderPassInfo.pAttachments = attachments;
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
@@ -830,6 +856,7 @@ bool VulkanApp::createPipeline()
     rasterizer.depthBiasSlopeFactor = 0.0f;
 
     // MSAA
+#ifdef MSAA
     VkPipelineMultisampleStateCreateInfo multisampling = {};
     multisampling.sType =
                       VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -839,6 +866,7 @@ bool VulkanApp::createPipeline()
     multisampling.pSampleMask = nullptr;
     multisampling.alphaToCoverageEnable = VK_FALSE;
     multisampling.alphaToOneEnable = VK_FALSE;
+#endif
 
     // Stencil/depth buffer
     // Use VkPipelineDepthStencilStateCreateInfo
@@ -896,7 +924,11 @@ bool VulkanApp::createPipeline()
     pipelineInfo.pInputAssemblyState = &inputAssembly;
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
+#ifdef MSAA
     pipelineInfo.pMultisampleState = &multisampling;
+#else
+    pipelineInfo.pMultisampleState = nullptr;
+#endif
     pipelineInfo.pDepthStencilState = nullptr;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = nullptr;
@@ -919,12 +951,17 @@ bool VulkanApp::createFrameBuffers()
 {
     frameBuffers.resize(swapChain.size());
     for (unsigned i = 0; i != swapChain.size(); ++i) {
-        VkImageView attachments[] = { swapChain[i].msaaView,
-                                      swapChain[i].view };
+#ifdef MSAA
+        VkImageView attachments[] = {swapChain[i].msaaView,
+                                     swapChain[i].view };
+#else
+        VkImageView attachments[] = {swapChain[i].view };
+#endif
         VkFramebufferCreateInfo framebufferInfo = {};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = renderPass;
-        framebufferInfo.attachmentCount = 2;
+        framebufferInfo.attachmentCount = sizeof(attachments)/
+                                          sizeof(*attachments);
         framebufferInfo.pAttachments = attachments;
         framebufferInfo.width = devInfo.extent.width;
         framebufferInfo.height = devInfo.extent.height;
@@ -1111,9 +1148,11 @@ void VulkanApp::cleanupSwapChain()
         vkDestroyImageView(device, swpe.view, nullptr);
         // Note that the swpe.image is owned by and will be deallocated
         // through vkSwapChain
+#ifdef MSAA
         vkDestroyImageView(device, swpe.msaaView, nullptr);
         vkFreeMemory(device, swpe.msaaMemory, nullptr);
         vkDestroyImage(device, swpe.msaaImage, nullptr);
+#endif
     }
     vkDestroySwapchainKHR(device, vkSwapChain, nullptr);
 }
